@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>ThriftGH — Shop Quality Thrift & Deals in Ghana</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    /* Hide scrollbar for clean horizontal category scrolling */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-900 antialiased selection:bg-amber-200">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    // ==========================================
+    // STORE CONFIGURATION
+    // ==========================================
+    const STORE_CONFIG = {
+      name: "ThriftGH",
+      currency: "₵",
+      whatsappNumber: "233531661338",
+      adminPin: "2008",
+    };
+
+    const CATEGORIES = ["All", "Fashion", "Sneakers", "Electronics", "Bags", "Accessories"];
+    const CONDITIONS = ["Thrift (Grade A)", "UK Used", "Brand New"];
+
+    // Initial sample inventory so the store looks active right away
+    const DEFAULT_PRODUCTS = [
+      {
+        id: "prod-1",
+        title: "Nike Air Force 1 Low White",
+        price: 380,
+        oldPrice: 480,
+        category: "Sneakers",
+        condition: "UK Used",
+        soldOut: false,
+        description: "Clean UK used AF1, size 42 EU. Minimal crease, original soles intact.",
+        image: "https://images.unsplash.com/photo-1549298916-b41d501d3772?auto=format&fit=crop&w=600&q=80",
+        createdAt: Date.now() - 400000
+      },
+      {
+        id: "prod-2",
+        title: "Vintage Oversized Denim Jacket",
+        price: 160,
+        oldPrice: 220,
+        category: "Fashion",
+        condition: "Thrift (Grade A)",
+        soldOut: false,
+        description: "Heavyweight vintage wash denim jacket. Fits Large / XL comfortably.",
+        image: "https://images.unsplash.com/photo-1576871337622-98d48d1cf531?auto=format&fit=crop&w=600&q=80",
+        createdAt: Date.now() - 300000
+      },
+      {
+        id: "prod-3",
+        title: "Apple AirPods Pro (2nd Gen)",
+        price: 1150,
+        oldPrice: 1400,
+        category: "Electronics",
+        condition: "UK Used",
+        soldOut: false,
+        description: "Tested & verified active noise cancellation. Comes with charging case.",
+        image: "https://images.unsplash.com/photo-1600294037681-c80b4cb5b434?auto=format&fit=crop&w=600&q=80",
+        createdAt: Date.now() - 200000
+      },
+      {
+        id: "prod-4",
+        title: "Crossbody Leather Everyday Bag",
+        price: 135,
+        oldPrice: null,
+        category: "Bags",
+        condition: "Brand New",
+        soldOut: false,
+        description: "Water-resistant faux leather crossbody bag with adjustable strap.",
+        image: "https://images.unsplash.com/photo-1548036328-c9fa89d128fa?auto=format&fit=crop&w=600&q=80",
+        createdAt: Date.now() - 100000
+      }
+    ];
+
+    function App() {
+      // Load saved products or initialize with defaults
+      const [products, setProducts] = useState(() => {
+        try {
+          const saved = localStorage.getItem("thriftgh_products_v1");
+          return saved ? JSON.parse(saved) : DEFAULT_PRODUCTS;
+        } catch {
+          return DEFAULT_PRODUCTS;
+        }
+      });
+
+      const [cart, setCart] = useState([]);
+      const [search, setSearch] = useState("");
+      const [selectedCategory, setSelectedCategory] = useState("All");
+      const [selectedProduct, setSelectedProduct] = useState(null);
+
+      // UI Drawer/Modal States
+      const [isCartOpen, setIsCartOpen] = useState(false);
+      const [isAdminOpen, setIsAdminOpen] = useState(false);
+      const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+      const [pinInput, setPinInput] = useState("");
+      const [pinError, setPinError] = useState("");
+
+      // Checkout Form State
+      const [checkoutForm, setCheckoutForm] = useState({
+        name: "",
+        phone: "",
+        location: "",
+        paymentMethod: "MTN MoMo / Telecel Cash"
+      });
+
+      // New Product Form State (Admin)
+      const [newProduct, setNewProduct] = useState({
+        title: "",
+        price: "",
+        oldPrice: "",
+        category: "Fashion",
+        condition: "Thrift (Grade A)",
+        description: "",
+        image: ""
+      });
+
+      // Persist products to local storage
+      useEffect(() => {
+        try {
+          localStorage.setItem("thriftgh_products_v1", JSON.stringify(products));
+        } catch (e) {
+          console.warn("Storage quota exceeded for images.");
+        }
+      }, [products]);
+
+      // Filtered Products
+      const filteredProducts = useMemo(() => {
+        return products.filter((p) => {
+          const matchesCategory = selectedCategory === "All" || p.category === selectedCategory;
+          const matchesSearch =
+            p.title.toLowerCase().includes(search.toLowerCase()) ||
+            p.description.toLowerCase().includes(search.toLowerCase());
+          return matchesCategory && matchesSearch;
+        });
+      }, [products, selectedCategory, search]);
+
+      // Cart Helpers
+      const addToCart = (product) => {
+        if (product.soldOut) return;
+        setCart((prev) => {
+          const existing = prev.find((item) => item.id === product.id);
+          if (existing) {
+            return prev.map((item) =>
+              item.id === product.id ? { ...item, qty: item.qty + 1 } : item
+            );
+          }
+          return [...prev, { ...product, qty: 1 }];
+        });
+      };
+
+      const updateQty = (id, delta) => {
+        setCart((prev) =>
+          prev
+            .map((item) => (item.id === id ? { ...item, qty: item.qty + delta } : item))
+            .filter((item) => item.qty > 0)
+        );
+      };
+
+      const cartCount = cart.reduce((sum, item) => sum + item.qty, 0);
+      const cartTotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+
+      // WhatsApp Order Submission
+      const handlePlaceOrder = (e) => {
+        e.preventDefault();
+        if (!checkoutForm.name || !checkoutForm.phone || !checkoutForm.location) return;
+
+        const itemsList = cart
+          .map((item, idx) => `${idx + 1}. ${item.title} (x${item.qty}) - ₵${item.price * item.qty}`)
+          .join("\n");
+
+        const message =
+          `*NEW ORDER — ${STORE_CONFIG.name}*\n\n` +
+          `*Customer:* ${checkoutForm.name}\n` +
+          `*Phone:* ${checkoutForm.phone}\n` +
+          `*Delivery Location:* ${checkoutForm.location}\n` +
+          `*Payment:* ${checkoutForm.paymentMethod}\n\n` +
+          `*Items:*\n${itemsList}\n\n` +
+          `*Total: ₵${cartTotal.toLocaleString()}*`;
+
+        const url = `https://wa.me/${STORE_CONFIG.whatsappNumber}?text=${encodeURIComponent(message)}`;
+        window.open(url, "_blank");
+      };
+
+      // Admin Image Upload (Compresses photo for fast mobile storage)
+      const handleImageUpload = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement("canvas");
+            const MAX_WIDTH = 700;
+            const scaleSize = MAX_WIDTH / img.width;
+            canvas.width = MAX_WIDTH;
+            canvas.height = img.height * scaleSize;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            const compressedDataUrl = canvas.toDataURL("image/jpeg", 0.78);
+            setNewProduct((prev) => ({ ...prev, image: compressedDataUrl }));
+          };
+          img.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+      };
+
+      // Admin Add Product
+      const handleAddProduct = (e) => {
+        e.preventDefault();
+        if (!newProduct.title || !newProduct.price) return;
+
+        const item = {
+          id: "prod-" + Date.now(),
+          title: newProduct.title.trim(),
+          price: Number(newProduct.price),
+          oldPrice: newProduct.oldPrice ? Number(newProduct.oldPrice) : null,
+          category: newProduct.category,
+          condition: newProduct.condition,
+          soldOut: false,
+          description: newProduct.description.trim() || "Quality verified item from ThriftGH.",
+          image:
+            newProduct.image ||
+            "https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=600&q=80",
+          createdAt: Date.now()
+        };
+
+        setProducts([item, ...products]);
+        setNewProduct({
+          title: "",
+          price: "",
+          oldPrice: "",
+          category: "Fashion",
+          condition: "Thrift (Grade A)",
+          description: "",
+          image: ""
+        });
+        alert("Product published live to ThriftGH!");
+      };
+
+      const toggleSoldOut = (id) => {
+        setProducts((prev) =>
+          prev.map((p) => (p.id === id ? { ...p, soldOut: !p.soldOut } : p))
+        );
+      };
+
+      const deleteProduct = (id) => {
+        if (confirm("Delete this product permanently?")) {
+          setProducts((prev) => prev.filter((p) => p.id !== id));
+        }
+      };
+
+      const handleAdminLogin = (e) => {
+        e.preventDefault();
+        if (pinInput === STORE_CONFIG.adminPin) {
+          setIsAdminAuthenticated(true);
+          setPinError("");
+          setPinInput("");
+        } else {
+          setPinError("Incorrect PIN. Please try again.");
+        }
+      };
+
+      return (
+        <div className="min-h-screen flex flex-col pb-16">
+          {/* TOP NAVBAR (Jumia/Amazon style sticky header) */}
+          <header className="sticky top-0 z-30 bg-amber-500 text-gray-950 shadow-sm">
+            <div className="max-w-5xl mx-auto px-3 py-2.5 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-gray-950 text-amber-400 font-black flex items-center justify-center text-lg">
+                  T
+                </div>
+                <span className="font-extrabold text-xl tracking-tight">
+                  Thrift<span className="text-white">GH</span>
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* Seller Admin Button */}
+                <button
+                  onClick={() => setIsAdminOpen(true)}
+                  className="px-3 py-1.5 rounded-full bg-gray-950/10 hover:bg-gray-950/20 text-xs font-bold flex items-center gap-1.5 transition"
+                >
+                  <span>+ Post Item</span>
+                </button>
+
+                {/* Cart Button */}
+                <button
+                  onClick={() => setIsCartOpen(true)}
+                  className="relative p-2 rounded-full bg-gray-950 text-white hover:bg-gray-800 transition"
+                  aria-label="Shopping Cart"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                  </svg>
+                  {cartCount > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[11px] font-bold w-5 h-5 rounded-full flex items-center justify-center">
+                      {cartCount}
+                    </span>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* SEARCH BAR */}
+            <div className="max-w-5xl mx-auto px-3 pb-2.5">
+              <div className="relative">
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search sneakers, thrift jackets, iPhones, bags..."
+                  className="w-full pl-9 pr-4 py-2 rounded-lg bg-white text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-gray-950"
+                />
+                <svg className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z" />
+                </svg>
+              </div>
+            </div>
+          </header>
+
+          {/* PROMO BANNER */}
+          <div className="bg-gray-900 text-white text-xs py-2 px-3 text-center font-medium">
+            Nationwide Delivery across Accra, Kumasi, Takoradi & Tamale • Pay via MoMo or Cash on Delivery
+          </div>
+
+          {/* CATEGORY PILLS */}
+          <div className="bg-white border-b border-gray-200 sticky top-[102px] z-20">
+            <div className="max-w-5xl mx-auto px-3 py-2.5 flex gap-2 overflow-x-auto no-scrollbar">
+              {CATEGORIES.map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => setSelectedCategory(cat)}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition ${
+                    selectedCategory === cat
+                      ? "bg-amber-500 text-gray-950 shadow-sm"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* PRODUCT GRID */}
+          <main className="max-w-5xl mx-auto w-full px-3 pt-4 flex-1">
+            <div className="flex items-center justify-between mb-3">
+              <h1 className="text-sm font-bold text-gray-700 uppercase tracking-wider">
+                {selectedCategory === "All" ? "Fresh Drops" : selectedCategory} ({filteredProducts.length})
+              </h1>
+            </div>
+
+            {filteredProducts.length === 0 ? (
+              <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
+                <p className="text-gray-500 text-sm">No products match your search.</p>
+                <button
+                  onClick={() => { setSearch(""); setSelectedCategory("All"); }}
+                  className="mt-3 text-xs font-bold text-amber-600 underline"
+                >
+                  Reset filters
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {filteredProducts.map((product) => {
+                  const discount =
+                    product.oldPrice && product.oldPrice > product.price
+                      ? Math.round(((product.oldPrice - product.price) / product.oldPrice) * 100)
+                      : null;
+
+                  return (
+                    <div
+                      key={product.id}
+                      className="bg-white rounded-xl border border-gray-200 overflow-hidden flex flex-col shadow-sm hover:shadow-md transition"
+                    >
+                      {/* Product Image */}
+                      <div
+                        onClick={() => setSelectedProduct(product)}
+                        className="relative aspect-square bg-gray-100 cursor-pointer overflow-hidden"
+                      >
+                        <img
+                          src={product.image}
+                          alt={product.title}
+                          className={`w-full h-full object-cover ${product.soldOut ? "opacity-50 grayscale" : ""}`}
+                        />
+                        {/* Condition Badge */}
+                        <span className="absolute top-2 left-2 bg-gray-950/80 text-white text-[10px] font-semibold px-2 py-0.5 rounded">
+                          {product.condition}
+                        </span>
+                        {/* Discount Badge */}
+                        {discount && !product.soldOut && (
+                          <span className="absolute top-2 right-2 bg-amber-500 text-gray-950 text-[10px] font-extrabold px-1.5 py-0.5 rounded">
+                            -{discount}%
+                          </span>
+                        )}
+                        {product.soldOut && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                            <span className="bg-red-600 text-white text-xs font-extrabold px-3 py-1 rounded uppercase tracking-wider">
+                              Sold Out
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Product Info */}
+                      <div className="p-2.5 flex-1 flex flex-col justify-between">
+                        <div onClick={() => setSelectedProduct(product)} className="cursor-pointer">
+                          <h2 className="text-xs sm:text-sm font-semibold text-gray-800 line-clamp-2 leading-snug">
+                            {product.title}
+                          </h2>
+                          <div className="mt-1.5 flex items-baseline gap-1.5">
+                            <span className="text-base font-extrabold text-gray-950">
+                              {STORE_CONFIG.currency}{product.price.toLocaleString()}
+                            </span>
+                            {product.oldPrice && (
+                              <span className="text-xs text-gray-400 line-through">
+                                {STORE_CONFIG.currency}{product.oldPrice.toLocaleString()}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <button
+                          disabled={product.soldOut}
+                          onClick={() => addToCart(product)}
+                          className={`mt-2.5 w-full py-2 rounded-lg text-xs font-bold transition ${
+                            product.soldOut
+                              ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                              : "bg-amber-500 hover:bg-amber-400 active:scale-[0.98] text-gray-950"
+                          }`}
+                        >
+                          {product.soldOut ? "Unavailable" : "Add to Cart"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </main>
+
+          {/* PRODUCT DETAIL MODAL */}
+          {selectedProduct && (
+            <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4">
+              <div className="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden max-h-[90vh] flex flex-col">
+                <div className="relative h-72 bg-gray-100">
+                  <img src={selectedProduct.image} alt={selectedProduct.title} className="w-full h-full object-cover" />
+                  <button
+                    onClick={() => setSelectedProduct(null)}
+                    className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/70 text-white flex items-center justify-center font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="p-4 overflow-y-auto">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xs font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-900">
+                      {selectedProduct.condition}
+                    </span>
+                    <span className="text-xs text-gray-500">{selectedProduct.category}</span>
+                  </div>
+                  <h2 className="text-lg font-bold text-gray-900">{selectedProduct.title}</h2>
+                  <p className="text-2xl font-black text-gray-950 mt-1">
+                    {STORE_CONFIG.currency}{selectedProduct.price.toLocaleString()}
+                  </p>
+                  <p className="text-sm text-gray-600 mt-3 leading-relaxed">
+                    {selectedProduct.description}
+                  </p>
+                  <button
+                    disabled={selectedProduct.soldOut}
+                    onClick={() => {
+                      addToCart(selectedProduct);
+                      setSelectedProduct(null);
+                      setIsCartOpen(true);
+                    }}
+                    className="mt-5 w-full py-3 rounded-xl bg-amber-500 font-extrabold text-gray-950 text-sm disabled:bg-gray-300"
+                  >
+                    {selectedProduct.soldOut ? "Sold Out" : "Add to Cart & Checkout"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* SHOPPING CART & CHECKOUT DRAWER */}
+          {isCartOpen && (
+            <div className="fixed inset-0 z-50 bg-black/60 flex justify-end">
+              <div className="bg-white w-full max-w-md h-full flex flex-col">
+                <div className="p-4 border-b flex items-center justify-between bg-gray-950 text-white">
+                  <h2 className="font-bold text-base">Your Cart ({cartCount})</h2>
+                  <button onClick={() => setIsCartOpen(false)} className="text-sm px-2 py-1 rounded bg-white/10">
+                    Close ✕
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {cart.length === 0 ? (
+                    <p className="text-center text-gray-500 text-sm py-12">Your cart is empty.</p>
+                  ) : (
+                    <>
+                      {/* Cart Items */}
+                      <div className="space-y-3">
+                        {cart.map((item) => (
+                          <div key={item.id} className="flex items-center gap-3 bg-gray-50 p-2.5 rounded-xl border">
+                            <img src={item.image} alt={item.title} className="w-14 h-14 rounded-lg object-cover" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-bold text-gray-900 truncate">{item.title}</p>
+                              <p className="text-xs font-extrabold text-amber-600 mt-0.5">
+                                {STORE_CONFIG.currency}{(item.price * item.qty).toLocaleString()}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => updateQty(item.id, -1)}
+                                className="w-7 h-7 rounded-lg bg-gray-200 font-bold text-sm"
+                              >
+                                -
+                              </button>
+                              <span className="text-xs font-bold w-4 text-center">{item.qty}</span>
+                              <button
+                                onClick={() => updateQty(item.id, 1)}
+                                className="w-7 h-7 rounded-lg bg-gray-200 font-bold text-sm"
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Delivery & Payment Form */}
+                      <form onSubmit={handlePlaceOrder} className="pt-3 border-t space-y-3">
+                        <h3 className="text-xs font-extrabold uppercase tracking-wider text-gray-500">
+                          Delivery Details
+                        </h3>
+                        <input
+                          required
+                          type="text"
+                          placeholder="Full Name (e.g. Kwame Mensah)"
+                          value={checkoutForm.name}
+                          onChange={(e) => setCheckoutForm({ ...checkoutForm, name: e.target.value })}
+                          className="w-full px-3 py-2.5 border rounded-lg text-sm"
+                        />
+                        <input
+                          required
+                          type="tel"
+                          placeholder="Phone / MoMo Number (e.g. 024 123 4567)"
+                          value={checkoutForm.phone}
+                          onChange={(e) => setCheckoutForm({ ...checkoutForm, phone: e.target.value })}
+                          className="w-full px-3 py-2.5 border rounded-lg text-sm"
+                        />
+                        <input
+                          required
+                          type="text"
+                          placeholder="Delivery Area / Landmark (e.g. East Legon, Accra)"
+                          value={checkoutForm.location}
+                          onChange={(e) => setCheckoutForm({ ...checkoutForm, location: e.target.value })}
+                          className="w-full px-3 py-2.5 border rounded-lg text-sm"
+                        />
+                        <select
+                          value={checkoutForm.paymentMethod}
+                          onChange={(e) => setCheckoutForm({ ...checkoutForm, paymentMethod: e.target.value })}
+                          className="w-full px-3 py-2.5 border rounded-lg text-sm bg-white"
+                        >
+                          <option>MTN MoMo / Telecel Cash</option>
+                          <option>Pay on Delivery (Accra Only)</option>
+                        </select>
+
+                        <div className="bg-amber-50 p-3 rounded-xl border border-amber-200 flex justify-between items-center">
+                          <span className="text-xs font-bold text-gray-700">Total Amount</span>
+                          <span className="text-lg font-black text-gray-950">
+                            {STORE_CONFIG.currency}{cartTotal.toLocaleString()}
+                          </span>
+                        </div>
+
+                        <button
+                          type="submit"
+                          className="w-full py-3.5 rounded-xl bg-green-600 hover:bg-green-500 text-white font-extrabold text-sm shadow-md"
+                        >
+                          Complete Order via WhatsApp
+                        </button>
+                      </form>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* SELLER ADMIN PANEL (Mobile-Optimized Product Uploader) */}
+          {isAdminOpen && (
+            <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-3">
+              <div className="bg-white w-full max-w-lg rounded-2xl overflow-hidden max-h-[92vh] flex flex-col">
+                <div className="p-4 bg-gray-950 text-white flex items-center justify-between">
+                  <div>
+                    <h2 className="font-bold text-base">ThriftGH Seller Admin</h2>
+                    <p className="text-[11px] text-gray-400">Snap, price & publish products from your phone</p>
+                  </div>
+                  <button
+                    onClick={() => setIsAdminOpen(false)}
+                    className="px-2.5 py-1 rounded bg-white/10 text-xs font-bold"
+                  >
+                    Done
+                  </button>
+                </div>
+
+                {!isAdminAuthenticated ? (
+                  <form onSubmit={handleAdminLogin} className="p-6 space-y-4">
+                    <label className="block text-sm font-bold text-gray-700">
+                      Enter Seller PIN
+                    </label>
+                    <input
+                      type="password"
+                      inputMode="numeric"
+                      value={pinInput}
+                      onChange={(e) => setPinInput(e.target.value)}
+                      placeholder="••••"
+                      className="w-full px-4 py-3 border rounded-xl text-center text-xl tracking-widest font-bold"
+                    />
+                    {pinError && <p className="text-xs text-red-600 font-semibold">{pinError}</p>}
+                    <button
+                      type="submit"
+                      className="w-full py-3 rounded-xl bg-amber-500 font-extrabold text-gray-950 text-sm"
+                    >
+                      Unlock Seller Dashboard
+                    </button>
+                  </form>
+                ) : (
+                  <div className="p-4 overflow-y-auto space-y-6">
+                    {/* Add New Product Form */}
+                    <form onSubmit={handleAddProduct} className="space-y-3 bg-gray-50 p-3.5 rounded-xl border">
+                      <h3 className="text-xs font-extrabold uppercase tracking-wider text-gray-700">
+                        + Post New Product
+                      </h3>
+
+                      {/* Photo Picker (Camera or Gallery) */}
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">
+                          Product Photo
+                        </label>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleImageUpload}
+                          className="w-full text-xs file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-amber-500 file:text-gray-950"
+                        />
+                        {newProduct.image && (
+                          <img
+                            src={newProduct.image}
+                            alt="Preview"
+                            className="mt-2 h-24 w-24 object-cover rounded-lg border"
+                          />
+                        )}
+                      </div>
+
+                      <input
+                        required
+                        type="text"
+                        placeholder="Product Name (e.g. Zara Cargo Pants)"
+                        value={newProduct.title}
+                        onChange={(e) => setNewProduct({ ...newProduct, title: e.target.value })}
+                        className="w-full px-3 py-2 border rounded-lg text-sm bg-white"
+                      />
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          required
+                          type="number"
+                          placeholder="Price in GHS (e.g. 150)"
+                          value={newProduct.price}
+                          onChange={(e) => setNewProduct({ ...newProduct, price: e.target.value })}
+                          className="w-full px-3 py-2 border rounded-lg text-sm bg-white"
+                        />
+                        <input
+                          type="number"
+                          placeholder="Old Price (Optional)"
+                          value={newProduct.oldPrice}
+                          onChange={(e) => setNewProduct({ ...newProduct, oldPrice: e.target.value })}
+                          className="w-full px-3 py-2 border rounded-lg text-sm bg-white"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <select
+                          value={newProduct.category}
+                          onChange={(e) => setNewProduct({ ...newProduct, category: e.target.value })}
+                          className="w-full px-3 py-2 border rounded-lg text-sm bg-white"
+                        >
+                          {CATEGORIES.filter((c) => c !== "All").map((c) => (
+                            <option key={c}>{c}</option>
+                          ))}
+                        </select>
+                        <select
+                          value={newProduct.condition}
+                          onChange={(e) => setNewProduct({ ...newProduct, condition: e.target.value })}
+                          className="w-full px-3 py-2 border rounded-lg text-sm bg-white"
+                        >
+                          {CONDITIONS.map((cond) => (
+                            <option key={cond}>{cond}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <textarea
+                        rows="2"
+                        placeholder="Size, color, flaws, or delivery notes..."
+                        value={newProduct.description}
+                        onChange={(e) => setNewProduct({ ...newProduct, description: e.target.value })}
+                        className="w-full px-3 py-2 border rounded-lg text-sm bg-white"
+                      />
+
+                      <button
+                        type="submit"
+                        className="w-full py-3 rounded-xl bg-gray-950 text-amber-400 font-extrabold text-sm hover:bg-gray-800"
+                      >
+                        Publish Product Now
+                      </button>
+                    </form>
+
+                    {/* Manage Existing Inventory */}
+                    <div>
+                      <h3 className="text-xs font-extrabold uppercase tracking-wider text-gray-700 mb-2">
+                        Manage Inventory ({products.length})
+                      </h3>
+                      <div className="space-y-2">
+                        {products.map((p) => (
+                          <div key={p.id} className="flex items-center justify-between gap-2 p-2 border rounded-lg">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <img src={p.image} alt="" className="w-10 h-10 rounded object-cover" />
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold truncate">{p.title}</p>
+                                <p className="text-[11px] text-gray-500">₵{p.price}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                onClick={() => toggleSoldOut(p.id)}
+                                className={`px-2 py-1 rounded text-[10px] font-bold ${
+                                  p.soldOut
+                                    ? "bg-green-100 text-green-800"
+                                    : "bg-amber-100 text-amber-900"
+                                }`}
+                              >
+                                {p.soldOut ? "Restock" : "Mark Sold"}
+                              </button>
+                              <button
+                                onClick={() => deleteProduct(p.id)}
+                                className="px-2 py-1 rounded bg-red-100 text-red-700 text-[10px] font-bold"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
