@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -8,8 +9,8 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
-    /* Hide scrollbar for clean horizontal category scrolling */
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   </style>
@@ -21,19 +22,26 @@
     const { useState, useEffect, useMemo } = React;
 
     // ==========================================
-    // STORE CONFIGURATION
+    // STORE & SUPABASE CONFIGURATION
     // ==========================================
     const STORE_CONFIG = {
       name: "ThriftGH",
       currency: "₵",
       whatsappNumber: "233531661338",
       adminPin: "2008",
+      supabaseUrl: "https://plyayqcnosawfzdxpkop.supabase.co",
+      supabaseAnonKey: "sb_publishable_HYkRHcQTDFgdoBIRltpeng_cm7BrFjf",
+      storageBucket: "product-images"
     };
+
+    const hasSupabase = Boolean(STORE_CONFIG.supabaseUrl && STORE_CONFIG.supabaseAnonKey);
+    const supabaseClient = hasSupabase
+      ? window.supabase.createClient(STORE_CONFIG.supabaseUrl, STORE_CONFIG.supabaseAnonKey)
+      : null;
 
     const CATEGORIES = ["All", "Fashion", "Sneakers", "Electronics", "Bags", "Accessories"];
     const CONDITIONS = ["Thrift (Grade A)", "UK Used", "Brand New"];
 
-    // Initial sample inventory so the store looks active right away
     const DEFAULT_PRODUCTS = [
       {
         id: "prod-1",
@@ -85,9 +93,35 @@
       }
     ];
 
+    const fromDbRow = (row) => ({
+      id: row.id,
+      title: row.title,
+      price: Number(row.price),
+      oldPrice: row.old_price !== null && row.old_price !== undefined ? Number(row.old_price) : null,
+      category: row.category,
+      condition: row.condition,
+      soldOut: Boolean(row.sold_out),
+      description: row.description || "",
+      image: row.image,
+      createdAt: Number(row.created_at) || Date.now()
+    });
+
+    const toDbRow = (item) => ({
+      id: item.id,
+      title: item.title,
+      price: item.price,
+      old_price: item.oldPrice,
+      category: item.category,
+      condition: item.condition,
+      sold_out: item.soldOut,
+      description: item.description,
+      image: item.image,
+      created_at: item.createdAt
+    });
+
     function App() {
-      // Load saved products or initialize with defaults
       const [products, setProducts] = useState(() => {
+        if (hasSupabase) return [];
         try {
           const saved = localStorage.getItem("thriftgh_products_v1");
           return saved ? JSON.parse(saved) : DEFAULT_PRODUCTS;
@@ -96,19 +130,20 @@
         }
       });
 
+      const [loadingProducts, setLoadingProducts] = useState(hasSupabase);
+      const [isSubmitting, setIsSubmitting] = useState(false);
+
       const [cart, setCart] = useState([]);
       const [search, setSearch] = useState("");
       const [selectedCategory, setSelectedCategory] = useState("All");
       const [selectedProduct, setSelectedProduct] = useState(null);
 
-      // UI Drawer/Modal States
       const [isCartOpen, setIsCartOpen] = useState(false);
       const [isAdminOpen, setIsAdminOpen] = useState(false);
       const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
       const [pinInput, setPinInput] = useState("");
       const [pinError, setPinError] = useState("");
 
-      // Checkout Form State
       const [checkoutForm, setCheckoutForm] = useState({
         name: "",
         phone: "",
@@ -116,7 +151,6 @@
         paymentMethod: "MTN MoMo / Telecel Cash"
       });
 
-      // New Product Form State (Admin)
       const [newProduct, setNewProduct] = useState({
         title: "",
         price: "",
@@ -124,19 +158,42 @@
         category: "Fashion",
         condition: "Thrift (Grade A)",
         description: "",
-        image: ""
+        image: "",
+        imageBlob: null
       });
 
-      // Persist products to local storage
+      const fetchProducts = async () => {
+        if (!supabaseClient) return;
+        setLoadingProducts(true);
+        const { data, error } = await supabaseClient
+          .from("products")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          console.error("Supabase fetch error:", error.message);
+        } else {
+          setProducts((data || []).map(fromDbRow));
+        }
+        setLoadingProducts(false);
+      };
+
       useEffect(() => {
-        try {
-          localStorage.setItem("thriftgh_products_v1", JSON.stringify(products));
-        } catch (e) {
-          console.warn("Storage quota exceeded for images.");
+        if (hasSupabase) {
+          fetchProducts();
+        }
+      }, []);
+
+      useEffect(() => {
+        if (!hasSupabase) {
+          try {
+            localStorage.setItem("thriftgh_products_v1", JSON.stringify(products));
+          } catch (e) {
+            console.warn("Local storage limit reached.");
+          }
         }
       }, [products]);
 
-      // Filtered Products
       const filteredProducts = useMemo(() => {
         return products.filter((p) => {
           const matchesCategory = selectedCategory === "All" || p.category === selectedCategory;
@@ -147,7 +204,6 @@
         });
       }, [products, selectedCategory, search]);
 
-      // Cart Helpers
       const addToCart = (product) => {
         if (product.soldOut) return;
         setCart((prev) => {
@@ -172,7 +228,6 @@
       const cartCount = cart.reduce((sum, item) => sum + item.qty, 0);
       const cartTotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
 
-      // WhatsApp Order Submission
       const handlePlaceOrder = (e) => {
         e.preventDefault();
         if (!checkoutForm.name || !checkoutForm.phone || !checkoutForm.location) return;
@@ -194,7 +249,6 @@
         window.open(url, "_blank");
       };
 
-      // Admin Image Upload (Compresses photo for fast mobile storage)
       const handleImageUpload = (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -204,61 +258,125 @@
           const img = new Image();
           img.onload = () => {
             const canvas = document.createElement("canvas");
-            const MAX_WIDTH = 700;
-            const scaleSize = MAX_WIDTH / img.width;
-            canvas.width = MAX_WIDTH;
+            const MAX_WIDTH = 800;
+            const scaleSize = Math.min(1, MAX_WIDTH / img.width);
+            canvas.width = img.width * scaleSize;
             canvas.height = img.height * scaleSize;
             const ctx = canvas.getContext("2d");
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-            const compressedDataUrl = canvas.toDataURL("image/jpeg", 0.78);
-            setNewProduct((prev) => ({ ...prev, image: compressedDataUrl }));
+
+            const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+            canvas.toBlob(
+              (blob) => {
+                setNewProduct((prev) => ({
+                  ...prev,
+                  image: dataUrl,
+                  imageBlob: blob
+                }));
+              },
+              "image/jpeg",
+              0.8
+            );
           };
           img.src = event.target.result;
         };
         reader.readAsDataURL(file);
       };
 
-      // Admin Add Product
-      const handleAddProduct = (e) => {
+      const uploadProductPhoto = async (blob, productId) => {
+        const filePath = `${productId}-${Date.now()}.jpg`;
+        const { error: uploadError } = await supabaseClient.storage
+          .from(STORE_CONFIG.storageBucket)
+          .upload(filePath, blob, { contentType: "image/jpeg", cacheControl: "3600" });
+
+        if (uploadError) throw uploadError;
+
+        const { data } = supabaseClient.storage
+          .from(STORE_CONFIG.storageBucket)
+          .getPublicUrl(filePath);
+
+        return data.publicUrl;
+      };
+
+      const handleAddProduct = async (e) => {
         e.preventDefault();
         if (!newProduct.title || !newProduct.price) return;
 
-        const item = {
-          id: "prod-" + Date.now(),
-          title: newProduct.title.trim(),
-          price: Number(newProduct.price),
-          oldPrice: newProduct.oldPrice ? Number(newProduct.oldPrice) : null,
-          category: newProduct.category,
-          condition: newProduct.condition,
-          soldOut: false,
-          description: newProduct.description.trim() || "Quality verified item from ThriftGH.",
-          image:
-            newProduct.image ||
-            "https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=600&q=80",
-          createdAt: Date.now()
-        };
+        setIsSubmitting(true);
+        const productId = "prod-" + Date.now();
 
-        setProducts([item, ...products]);
-        setNewProduct({
-          title: "",
-          price: "",
-          oldPrice: "",
-          category: "Fashion",
-          condition: "Thrift (Grade A)",
-          description: "",
-          image: ""
-        });
-        alert("Product published live to ThriftGH!");
+        try {
+          let finalImageUrl =
+            "https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=600&q=80";
+
+          if (hasSupabase && newProduct.imageBlob) {
+            finalImageUrl = await uploadProductPhoto(newProduct.imageBlob, productId);
+          } else if (newProduct.image) {
+            finalImageUrl = newProduct.image;
+          }
+
+          const item = {
+            id: productId,
+            title: newProduct.title.trim(),
+            price: Number(newProduct.price),
+            oldPrice: newProduct.oldPrice ? Number(newProduct.oldPrice) : null,
+            category: newProduct.category,
+            condition: newProduct.condition,
+            soldOut: false,
+            description: newProduct.description.trim() || "Quality verified item from ThriftGH.",
+            image: finalImageUrl,
+            createdAt: Date.now()
+          };
+
+          if (hasSupabase) {
+            const { error } = await supabaseClient.from("products").insert([toDbRow(item)]);
+            if (error) throw error;
+            await fetchProducts();
+          } else {
+            setProducts((prev) => [item, ...prev]);
+          }
+
+          setNewProduct({
+            title: "",
+            price: "",
+            oldPrice: "",
+            category: "Fashion",
+            condition: "Thrift (Grade A)",
+            description: "",
+            image: "",
+            imageBlob: null
+          });
+          alert("Product published live to ThriftGH!");
+        } catch (err) {
+          alert("Could not publish product: " + (err.message || err));
+        } finally {
+          setIsSubmitting(false);
+        }
       };
 
-      const toggleSoldOut = (id) => {
-        setProducts((prev) =>
-          prev.map((p) => (p.id === id ? { ...p, soldOut: !p.soldOut } : p))
-        );
+      const toggleSoldOut = async (product) => {
+        const nextSoldOut = !product.soldOut;
+        if (hasSupabase) {
+          const { error } = await supabaseClient
+            .from("products")
+            .update({ sold_out: nextSoldOut })
+            .eq("id", product.id);
+          if (error) return alert("Update failed: " + error.message);
+          await fetchProducts();
+        } else {
+          setProducts((prev) =>
+            prev.map((p) => (p.id === product.id ? { ...p, soldOut: nextSoldOut } : p))
+          );
+        }
       };
 
-      const deleteProduct = (id) => {
-        if (confirm("Delete this product permanently?")) {
+      const deleteProduct = async (id) => {
+        if (!confirm("Delete this product permanently?")) return;
+        if (hasSupabase) {
+          const { error } = await supabaseClient.from("products").delete().eq("id", id);
+          if (error) return alert("Delete failed: " + error.message);
+          await fetchProducts();
+        } else {
           setProducts((prev) => prev.filter((p) => p.id !== id));
         }
       };
@@ -276,7 +394,6 @@
 
       return (
         <div className="min-h-screen flex flex-col pb-16">
-          {/* TOP NAVBAR (Jumia/Amazon style sticky header) */}
           <header className="sticky top-0 z-30 bg-amber-500 text-gray-950 shadow-sm">
             <div className="max-w-5xl mx-auto px-3 py-2.5 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -289,7 +406,6 @@
               </div>
 
               <div className="flex items-center gap-2">
-                {/* Seller Admin Button */}
                 <button
                   onClick={() => setIsAdminOpen(true)}
                   className="px-3 py-1.5 rounded-full bg-gray-950/10 hover:bg-gray-950/20 text-xs font-bold flex items-center gap-1.5 transition"
@@ -297,7 +413,6 @@
                   <span>+ Post Item</span>
                 </button>
 
-                {/* Cart Button */}
                 <button
                   onClick={() => setIsCartOpen(true)}
                   className="relative p-2 rounded-full bg-gray-950 text-white hover:bg-gray-800 transition"
@@ -315,7 +430,6 @@
               </div>
             </div>
 
-            {/* SEARCH BAR */}
             <div className="max-w-5xl mx-auto px-3 pb-2.5">
               <div className="relative">
                 <input
@@ -332,12 +446,10 @@
             </div>
           </header>
 
-          {/* PROMO BANNER */}
           <div className="bg-gray-900 text-white text-xs py-2 px-3 text-center font-medium">
             Nationwide Delivery across Accra, Kumasi, Takoradi & Tamale • Pay via MoMo or Cash on Delivery
           </div>
 
-          {/* CATEGORY PILLS */}
           <div className="bg-white border-b border-gray-200 sticky top-[102px] z-20">
             <div className="max-w-5xl mx-auto px-3 py-2.5 flex gap-2 overflow-x-auto no-scrollbar">
               {CATEGORIES.map((cat) => (
@@ -356,15 +468,28 @@
             </div>
           </div>
 
-          {/* PRODUCT GRID */}
           <main className="max-w-5xl mx-auto w-full px-3 pt-4 flex-1">
             <div className="flex items-center justify-between mb-3">
               <h1 className="text-sm font-bold text-gray-700 uppercase tracking-wider">
                 {selectedCategory === "All" ? "Fresh Drops" : selectedCategory} ({filteredProducts.length})
               </h1>
+              {hasSupabase && (
+                <button
+                  onClick={fetchProducts}
+                  className="text-xs font-semibold text-amber-700 hover:underline"
+                >
+                  Refresh
+                </button>
+              )}
             </div>
 
-            {filteredProducts.length === 0 ? (
+            {loadingProducts ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {[1, 2, 3, 4].map((n) => (
+                  <div key={n} className="bg-white rounded-xl border border-gray-200 h-64 animate-pulse" />
+                ))}
+              </div>
+            ) : filteredProducts.length === 0 ? (
               <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
                 <p className="text-gray-500 text-sm">No products match your search.</p>
                 <button
@@ -387,7 +512,6 @@
                       key={product.id}
                       className="bg-white rounded-xl border border-gray-200 overflow-hidden flex flex-col shadow-sm hover:shadow-md transition"
                     >
-                      {/* Product Image */}
                       <div
                         onClick={() => setSelectedProduct(product)}
                         className="relative aspect-square bg-gray-100 cursor-pointer overflow-hidden"
@@ -397,11 +521,9 @@
                           alt={product.title}
                           className={`w-full h-full object-cover ${product.soldOut ? "opacity-50 grayscale" : ""}`}
                         />
-                        {/* Condition Badge */}
                         <span className="absolute top-2 left-2 bg-gray-950/80 text-white text-[10px] font-semibold px-2 py-0.5 rounded">
                           {product.condition}
                         </span>
-                        {/* Discount Badge */}
                         {discount && !product.soldOut && (
                           <span className="absolute top-2 right-2 bg-amber-500 text-gray-950 text-[10px] font-extrabold px-1.5 py-0.5 rounded">
                             -{discount}%
@@ -416,7 +538,6 @@
                         )}
                       </div>
 
-                      {/* Product Info */}
                       <div className="p-2.5 flex-1 flex flex-col justify-between">
                         <div onClick={() => setSelectedProduct(product)} className="cursor-pointer">
                           <h2 className="text-xs sm:text-sm font-semibold text-gray-800 line-clamp-2 leading-snug">
@@ -453,7 +574,6 @@
             )}
           </main>
 
-          {/* PRODUCT DETAIL MODAL */}
           {selectedProduct && (
             <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4">
               <div className="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden max-h-[90vh] flex flex-col">
@@ -496,7 +616,6 @@
             </div>
           )}
 
-          {/* SHOPPING CART & CHECKOUT DRAWER */}
           {isCartOpen && (
             <div className="fixed inset-0 z-50 bg-black/60 flex justify-end">
               <div className="bg-white w-full max-w-md h-full flex flex-col">
@@ -512,7 +631,6 @@
                     <p className="text-center text-gray-500 text-sm py-12">Your cart is empty.</p>
                   ) : (
                     <>
-                      {/* Cart Items */}
                       <div className="space-y-3">
                         {cart.map((item) => (
                           <div key={item.id} className="flex items-center gap-3 bg-gray-50 p-2.5 rounded-xl border">
@@ -542,7 +660,6 @@
                         ))}
                       </div>
 
-                      {/* Delivery & Payment Form */}
                       <form onSubmit={handlePlaceOrder} className="pt-3 border-t space-y-3">
                         <h3 className="text-xs font-extrabold uppercase tracking-wider text-gray-500">
                           Delivery Details
@@ -601,14 +718,15 @@
             </div>
           )}
 
-          {/* SELLER ADMIN PANEL (Mobile-Optimized Product Uploader) */}
           {isAdminOpen && (
             <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-3">
               <div className="bg-white w-full max-w-lg rounded-2xl overflow-hidden max-h-[92vh] flex flex-col">
                 <div className="p-4 bg-gray-950 text-white flex items-center justify-between">
                   <div>
                     <h2 className="font-bold text-base">ThriftGH Seller Admin</h2>
-                    <p className="text-[11px] text-gray-400">Snap, price & publish products from your phone</p>
+                    <p className="text-[11px] text-gray-400">
+                      {hasSupabase ? "Connected to Supabase Cloud" : "Local preview mode (add Supabase keys to sync)"}
+                    </p>
                   </div>
                   <button
                     onClick={() => setIsAdminOpen(false)}
@@ -641,13 +759,11 @@
                   </form>
                 ) : (
                   <div className="p-4 overflow-y-auto space-y-6">
-                    {/* Add New Product Form */}
                     <form onSubmit={handleAddProduct} className="space-y-3 bg-gray-50 p-3.5 rounded-xl border">
                       <h3 className="text-xs font-extrabold uppercase tracking-wider text-gray-700">
                         + Post New Product
                       </h3>
 
-                      {/* Photo Picker (Camera or Gallery) */}
                       <div>
                         <label className="block text-xs font-semibold text-gray-600 mb-1">
                           Product Photo
@@ -725,13 +841,13 @@
 
                       <button
                         type="submit"
-                        className="w-full py-3 rounded-xl bg-gray-950 text-amber-400 font-extrabold text-sm hover:bg-gray-800"
+                        disabled={isSubmitting}
+                        className="w-full py-3 rounded-xl bg-gray-950 text-amber-400 font-extrabold text-sm hover:bg-gray-800 disabled:opacity-50"
                       >
-                        Publish Product Now
+                        {isSubmitting ? "Uploading & Publishing..." : "Publish Product Now"}
                       </button>
                     </form>
 
-                    {/* Manage Existing Inventory */}
                     <div>
                       <h3 className="text-xs font-extrabold uppercase tracking-wider text-gray-700 mb-2">
                         Manage Inventory ({products.length})
@@ -748,7 +864,7 @@
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
                               <button
-                                onClick={() => toggleSoldOut(p.id)}
+                                onClick={() => toggleSoldOut(p)}
                                 className={`px-2 py-1 rounded text-[10px] font-bold ${
                                   p.soldOut
                                     ? "bg-green-100 text-green-800"
